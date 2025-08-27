@@ -1,0 +1,7 @@
+FROM apache/airflow:2.7.0
+
+# Switch to airflow user before installing packages
+USER airflow
+
+# Install pymysql using pip
+RUN pip install --no-cache-dir pymysql
