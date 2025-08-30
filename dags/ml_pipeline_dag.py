@@ -2,7 +2,9 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
-from ingest_data import ingest_data  # import your function
+from ingest_data import ingest_data
+from load_data_from_db import load_data_from_db
+from validate_data import validate_shoppers_data
 
 default_args = {
     'owner': 'sonu',
@@ -16,7 +18,7 @@ default_args = {
 with DAG(
     'ml_pipeline_dag',
     default_args=default_args,
-    description='Ingest online shoppers data',
+    description='Ingest and validate online shoppers data',
     schedule_interval=None,
     start_date=datetime(2025, 8, 30),
     catchup=False,
@@ -24,5 +26,18 @@ with DAG(
 
     ingest_task = PythonOperator(
         task_id='ingest_data_task',
-        python_callable=ingest_data # call the function directly
+        python_callable=ingest_data
     )
+
+    load_task = PythonOperator(
+        task_id='load_data_task',
+        python_callable=load_data_from_db
+    )
+
+    validate_task = PythonOperator(
+        task_id='validate_data_task',
+        python_callable=lambda **kwargs: validate_shoppers_data(kwargs['ti'].xcom_pull(task_ids='load_data_task')),
+        provide_context=True
+    )
+
+    ingest_task >> load_task >> validate_task
