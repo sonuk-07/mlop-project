@@ -49,10 +49,12 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: mysql+pymysql://airflow:airflowpass@mysql-airflow:3306/airflow
       AIRFLOW_CONN_MARIADB_CONN: mysql://sonu:Yunachan10@mariadb-columnstore:3306/shoppers_db
       AIRFLOW_UID: 50000
+
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data 
+
       
     ports:
       - "8080:8080"
@@ -76,7 +78,6 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: mysql+pymysql://airflow:airflowpass@mysql-airflow:3306/airflow
       AIRFLOW_UID: 50000
-      # <-- Add same here
       AIRFLOW_CONN_MARIADB_CONN: mysql://sonu:Yunachan10@mariadb-columnstore:3306/shoppers_db
 
     volumes:

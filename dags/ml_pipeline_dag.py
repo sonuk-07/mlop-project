@@ -2,9 +2,9 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
-from ingest_data import ingest_data
-from load_data_from_db import load_data_from_db
-from validate_data import validate_shoppers_data
+from pipelines.ingest_data import ingest_data
+from pipelines.load_data_from_db import load_data_from_db
+from pipelines.validate_data import validate_shoppers_data
 
 default_args = {
     'owner': 'sonu',

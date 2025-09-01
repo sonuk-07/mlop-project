@@ -1,28 +1,20 @@
 # Base image
 FROM apache/airflow:2.10.5-python3.8
 
-# Switch to root for installing dependencies
 USER root
 
-# Install system packages if needed (optional)
 RUN apt-get update && apt-get install -y \
     default-libmysqlclient-dev \
     build-essential \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Switch back to airflow user
 USER airflow
-
-# Set working directory
 WORKDIR /opt/airflow
 
-# Copy DAGs folder into image
-COPY dags ./dags
-
-# Copy requirements.txt into image
-COPY dags/requirements.txt ./dags/requirements.txt
-
-# Install Python dependencies for DAGs
+COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir -r ./dags/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+
+COPY dags ./dags
