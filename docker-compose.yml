@@ -54,6 +54,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data 
+      - ./mlruns:/mlflow  
 
       
     ports:
@@ -84,7 +85,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data
-      
+      - ./mlruns:/mlflow 
     depends_on:
       airflow-webserver:
         condition: service_started

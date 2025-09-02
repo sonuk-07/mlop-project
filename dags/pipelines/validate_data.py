@@ -1,18 +1,34 @@
-# validate_data.py
 import great_expectations as gx
+import pandas as pd
+import logging
+from typing import Dict
 
-def validate_shoppers_data(df):
+log = logging.getLogger(__name__)
+
+def validate_shoppers_data(df: pd.DataFrame) -> Dict:
     """
     Validate the online shoppers dataset using Great Expectations.
-    df: Pandas DataFrame passed from the DAG.
+
+    Args:
+        df (pd.DataFrame): DataFrame passed from the DAG.
+
+    Returns:
+        dict: Validated DataFrame serialized as dict (orient='split') for XCom.
+
+    Raises:
+        ValueError: If input DataFrame is empty.
+        Exception: If validation fails.
     """
     if df is None or df.empty:
+        log.error("[ERROR] Received empty DataFrame for validation")
         raise ValueError("[ERROR] Received empty DataFrame for validation")
 
+    log.info("Starting data validation with Great Expectations.")
+
     # -------------------------------
-    # Initialize GE
+    # Initialize GE context (in-memory)
     # -------------------------------
-    context = gx.get_context()
+    context = gx.get_context(context_root_dir=None, runtime_environment={"config_variables": {}})
 
     context.add_datasource(
         name="default_pandas_datasource",
@@ -27,13 +43,13 @@ def validate_shoppers_data(df):
     )
 
     # -------------------------------
-    # Create expectation suite
+    # Expectation Suite
     # -------------------------------
     suite_name = "online_shoppers_dynamic_suite"
     context.add_or_update_expectation_suite(expectation_suite_name=suite_name)
 
     # -------------------------------
-    # RuntimeBatchRequest
+    # Runtime Batch Request
     # -------------------------------
     batch_request = gx.core.batch.RuntimeBatchRequest(
         datasource_name="default_pandas_datasource",
@@ -49,7 +65,7 @@ def validate_shoppers_data(df):
     )
 
     # -------------------------------
-    # Add expectations
+    # Numeric columns expectations
     # -------------------------------
     numeric_columns = [
         "Administrative", "Administrative_Duration", "Informational", "Informational_Duration",
@@ -60,6 +76,9 @@ def validate_shoppers_data(df):
         max_val = df[col].max()
         validator.expect_column_values_to_be_between(column=col, min_value=min_val, max_value=max_val)
 
+    # -------------------------------
+    # Categorical columns expectations
+    # -------------------------------
     categorical_columns = ["Month","OperatingSystems","Browser","Region","TrafficType","VisitorType","Weekend","Revenue"]
     for col in categorical_columns:
         unique_vals = df[col].dropna().unique().tolist()
@@ -71,26 +90,14 @@ def validate_shoppers_data(df):
     validator.save_expectation_suite(discard_failed_expectations=False)
     validation_result = validator.validate()
 
-    # -------------------------------
-    # Print detailed results
-    # -------------------------------
-    print(f"Validation success: {validation_result.success}")
-    print(f"Statistics: {validation_result.statistics}\n")
-
-    for idx, result in enumerate(validation_result.results, 1):
-        expectation_type = result.expectation_config.expectation_type
-        kwargs = result.expectation_config.kwargs
-        success = result.success
-
-        print(f"🔹 Expectation {idx}: {expectation_type}")
-        print(f"   ➤ Kwargs: {kwargs}")
-        print(f"   ✅ Success: {success}")
-
-        if not success:
-            if "unexpected_list" in result.result:
-                print(f"   ⚠️ Unexpected values: {result.result['unexpected_list']}")
-            elif "unexpected_percent" in result.result:
-                print(f"   ⚠️ Unexpected %: {result.result['unexpected_percent']:.2f}%")
-            elif "unexpected_index_list" in result.result:
-                print(f"   ⚠️ Failed rows index: {result.result['unexpected_index_list']}")
-        print("-" * 80)
+    if validation_result.success:
+        log.info("✅ Data validation passed successfully!")
+        return df.to_dict(orient='split')  # XCom-friendly
+    else:
+        log.error("❌ Data validation failed. Check Airflow logs for detailed results.")
+        for idx, result in enumerate(validation_result.results, 1):
+            if not result.success:
+                expectation_type = result.expectation_config.expectation_type
+                kwargs = result.expectation_config.kwargs
+                log.error(f"Expectation {idx}: {expectation_type} failed. ➤ Kwargs: {kwargs}")
+        raise Exception("Data validation failed.")

@@ -1,50 +1,61 @@
 import pandas as pd
 from sqlalchemy import create_engine
 import os
-import sys
+import logging
+import redis
+from typing import Optional
 
-def load_data_from_db():
+log = logging.getLogger(__name__)
+
+def load_data_from_db(
+    redis_host: str = 'redis',
+    redis_port: int = 6379,
+    db_url: Optional[str] = None,
+    table_name: str = 'shoppers'
+) -> Optional[pd.DataFrame]:
     """
-    Load data from 'shoppers' table in MySQL/MariaDB into a Pandas DataFrame.
-
-    Steps:
-    1. Connect to the database using SQLAlchemy.
-    2. Load data from 'shoppers' table into a DataFrame.
-    3. Return the DataFrame for further processing.
+    Load data from the 'shoppers' table in MariaDB into a Pandas DataFrame,
+    using Redis as a caching layer. Returns DataFrame.
     """
+    redis_key = f"{table_name}_data_loaded"
+    r = None
 
+    # 1️⃣ Try connecting to Redis
     try:
-        # -------------------------
-        # 1. Database Connection
-        # -------------------------
-        db_password = os.getenv("MYSQL_PASSWORD", "Yunachan10")
-        connection_string = f"mysql+pymysql://sonu:{db_password}@mariadb-columnstore:3306/shoppers_db"
-        eng_conn = create_engine(connection_string)
+        r = redis.Redis(host=redis_host, port=redis_port, db=0)
+        log.info("Connected to Redis successfully.")
+        if r.exists(redis_key):
+            log.info("Found cached data in Redis. Loading from cache...")
+            cached_data = r.get(redis_key)
+            df = pd.read_json(cached_data.decode('utf-8', errors='ignore'), orient='split')
+            log.info(f"Loaded {len(df)} rows from Redis cache.")
+            return df
+    except redis.exceptions.ConnectionError as e:
+        log.warning(f"Could not connect to Redis: {e}. Proceeding without caching.")
+        r = None
 
-        # -------------------------
-        # 2. Load data into DataFrame
-        # -------------------------
-        print("[INFO] Connecting to database and reading 'shoppers' table...")
-        df = pd.read_sql_table('shoppers', con=eng_conn)
-        print(f"[INFO] Loaded {len(df)} rows from database")
+    # 2️⃣ If Redis cache is empty or unavailable, load from database
+    try:
+        if not db_url:
+            db_password = os.getenv("MYSQL_PASSWORD", "Yunachan10")
+            db_url = f"mysql+pymysql://sonu:{db_password}@mariadb-columnstore:3306/shoppers_db"
+
+        engine = create_engine(db_url)
+        log.info(f"Connecting to database and reading '{table_name}' table...")
+        df = pd.read_sql_table(table_name, con=engine)
+        log.info(f"Loaded {len(df)} rows from database.")
+
+        # 3️⃣ Cache data in Redis if available
+        if r:
+            r.set(redis_key, df.to_json(orient='split'))
+            log.info("Data cached successfully in Redis.")
 
         return df
 
     except Exception as e:
-        print(f"[ERROR] Failed to load data from database: {e}")
-        print("Make sure:")
-        print("1. MariaDB container is running (`docker ps`)")
-        print("2. Database 'shoppers_db' and table 'shoppers' exist")
-        print("3. User 'sonu' has proper privileges")
+        log.error(f"Failed to load data from database: {e}")
+        log.error("Make sure:\n"
+                  "1. MariaDB container is running (`docker ps`)\n"
+                  f"2. Database and table '{table_name}' exist\n"
+                  "3. User has proper privileges")
         return None
-
-# -------------------------
-# Example usage
-# -------------------------
-if __name__ == "__main__":
-    df = load_data_from_db()
-    if df is None:
-        sys.exit(1)
-    else:
-        # Example: show first 5 rows
-        print(df.head())
