@@ -1,9 +1,8 @@
 import pandas as pd
 import logging
-from evidently.dashboard.dashboard import Dashboard
-from evidently.dashboard.tabs import ClassificationPerformanceTab, DataDriftTab
 from evidently.model_profile import Profile
 from evidently.model_profile.sections import DataDriftProfileSection, ClassificationPerformanceProfileSection
+from evidently import ColumnMapping
 import os
 
 log = logging.getLogger(__name__)
@@ -11,45 +10,57 @@ log = logging.getLogger(__name__)
 def generate_evidently_report(
     reference_df: pd.DataFrame,
     current_df: pd.DataFrame,
-    y_true: pd.Series = None,
+    target_col: str,
     y_pred: pd.Series = None,
-    report_dir: str = "/mlflow/reports"  # <-- MLflow shared folder
+    report_dir: str = "/mlflow/reports"
 ) -> dict:
     """
-    Generates Evidently reports for data drift and model performance.
-    Returns paths to HTML reports relative to /mlflow (XCom-friendly).
+    Generates:
+    1. Feature drift report
+    2. Concept drift / model performance report
     """
+
     os.makedirs(report_dir, exist_ok=True)
 
     # -------------------------
-    # 1️⃣ Data Drift Dashboard
+    # 1️⃣ Feature Drift Profile
     # -------------------------
-    log.info("Generating data drift dashboard...")
-    drift_dashboard = Dashboard(tabs=[DataDriftTab()])
-    drift_dashboard.calculate(reference_df=reference_df, current_df=current_df)
-    drift_dashboard_path = os.path.join(report_dir, "data_drift_report.html")
-    drift_dashboard.save(drift_dashboard_path)
-    log.info(f"Data drift report saved at {drift_dashboard_path}")
+    log.info("Generating feature drift profile...")
+    profile_feature = Profile(sections=[DataDriftProfileSection()])
+    column_mapping_feature = ColumnMapping()
+    column_mapping_feature.target = target_col
+
+    # Use the new Evidently API
+    profile_feature.run(reference_data=reference_df, current_data=current_df, column_mapping=column_mapping_feature)
+
+    feature_report_path = os.path.join(report_dir, "feature_drift_report.html")
+    profile_feature.save_html(feature_report_path)
+    log.info(f"Feature drift report saved at {feature_report_path}")
 
     # -------------------------
-    # 2️⃣ Model Performance Profile (optional)
+    # 2️⃣ Concept Drift / Model Performance Profile
     # -------------------------
-    profile_path = None
-    if y_true is not None and y_pred is not None:
-        log.info("Generating model performance profile...")
-        profile = Profile(sections=[ClassificationPerformanceProfileSection(), DataDriftProfileSection()])
+    concept_report_path = None
+    if y_pred is not None:
+        log.info("Generating concept drift / model performance profile...")
+        profile_concept = Profile(sections=[ClassificationPerformanceProfileSection(), DataDriftProfileSection()])
+
         current_df_copy = current_df.copy()
-        current_df_copy['target'] = y_true
         current_df_copy['prediction'] = y_pred
-        profile.calculate(reference_df=reference_df, current_df=current_df_copy)
-        profile_path = os.path.join(report_dir, "model_performance_report.html")
-        profile.save_html(profile_path)
-        log.info(f"Model performance report saved at {profile_path}")
 
-    # Return paths **relative to /mlflow**, suitable for MLflow logging
+        # Use the new Evidently API
+        profile_concept.run(reference_data=reference_df, current_data=current_df_copy, column_mapping=column_mapping_feature)
+
+        concept_report_path = os.path.join(report_dir, "concept_drift_report.html")
+        profile_concept.save_html(concept_report_path)
+        log.info(f"Concept drift report saved at {concept_report_path}")
+
+    # -------------------------
+    # Return relative paths
+    # -------------------------
     relative_paths = {
-        "data_drift_report": drift_dashboard_path.replace("/mlflow/", ""),
-        "model_performance_report": profile_path.replace("/mlflow/", "") if profile_path else None
+        "feature_drift_report": feature_report_path.replace("/mlflow/", ""),
+        "concept_drift_report": concept_report_path.replace("/mlflow/", "") if concept_report_path else None
     }
 
     return relative_paths

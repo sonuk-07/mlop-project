@@ -230,26 +230,36 @@ with DAG(
         ti = kwargs['ti']
         import joblib
 
+        # Load trained model
         trained_model_dict = ti.xcom_pull(key='trained_model', task_ids='train_model_task')
         model_path = trained_model_dict['model_path']
         trained_model = joblib.load(model_path)
 
+        # Reconstruct train/test data
         X_train = reconstruct_df(ti.xcom_pull(key='X_train', task_ids='prepare_data_task'))
         y_train = reconstruct_series(ti.xcom_pull(key='y_train', task_ids='prepare_data_task'))
         X_test = reconstruct_df(ti.xcom_pull(key='X_test', task_ids='prepare_data_task'))
         y_test = reconstruct_series(ti.xcom_pull(key='y_test', task_ids='prepare_data_task'))
 
+        # Predict on test set
         y_pred = trained_model.predict(X_test)
 
+        # Make sure `target` exists in current_df for Evidently
+        current_df_with_target = X_test.copy()
+        current_df_with_target['target'] = y_test
+
+        # Generate reports (use the updated generate_evidently_report)
         report_paths = generate_evidently_report(
-            reference_df=X_train.assign(target=y_train),
-            current_df=X_test,
-            y_true=y_test,
-            y_pred=y_pred
+            reference_df=X_train.assign(target=y_train),  # train set with target
+            current_df=current_df_with_target,            # test set with target
+            y_pred=y_pred,                                # predictions
+            target_col='target'                           # explicitly pass target column
         )
 
         ti.xcom_push(key='evidently_reports', value=report_paths)
         return "Monitoring done"
+
+
 
     evidently_monitoring_task = PythonOperator(
         task_id='evidently_monitoring_task',
