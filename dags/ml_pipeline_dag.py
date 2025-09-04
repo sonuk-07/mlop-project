@@ -2,9 +2,10 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import pandas as pd
-import os
-import joblib
 import logging
+from catboost import CatBoostClassifier
+import mlflow
+import os
 
 log = logging.getLogger(__name__)
 
@@ -23,22 +24,22 @@ default_args = {
 # Helper functions
 # -------------------------
 def reconstruct_df(obj):
-    if isinstance(obj, dict):
+    if isinstance(obj, pd.DataFrame):
+        return obj
+    elif isinstance(obj, dict):
         return pd.DataFrame(**obj)
-    return obj
+    else:
+        return pd.DataFrame(obj)
 
 def reconstruct_series(obj):
     if isinstance(obj, pd.Series):
         return obj
+    elif isinstance(obj, dict) and 'data' in obj and 'index' in obj:
+        return pd.Series(obj['data'], index=obj['index'])
     elif isinstance(obj, list):
         return pd.Series(obj)
-    elif isinstance(obj, dict):
-        if 'index' in obj and 'data' in obj:
-            return pd.Series(obj['data'], index=obj['index'], name=obj.get('name'))
-        else:
-            return pd.Series(obj)
     else:
-        raise ValueError(f"Cannot reconstruct Series from type {type(obj)}")
+        return pd.Series(obj)
 
 # -------------------------
 # DAG definition
@@ -226,39 +227,107 @@ with DAG(
     # 9️⃣ Evidently Monitoring
     # -------------------------
     def evidently_monitoring_task_callable(**kwargs):
+        import logging
+        from catboost import CatBoostClassifier
+        from mlflow.tracking import MlflowClient
         from pipelines.monitoring import generate_evidently_report
+        import pandas as pd
+        import os
+
+        log = logging.getLogger(__name__)
         ti = kwargs['ti']
-        import joblib
+        target_col = "Revenue"  # define your target column
 
-        # Load trained model
+        # -------------------------
+        # Get trained model info
+        # -------------------------
         trained_model_dict = ti.xcom_pull(key='trained_model', task_ids='train_model_task')
-        model_path = trained_model_dict['model_path']
-        trained_model = joblib.load(model_path)
+        if not trained_model_dict:
+            raise ValueError("No trained model found in XCom. Train the model first.")
 
+        mlflow_run_id = trained_model_dict['mlflow_run_id']
+        log.info(f"Using MLflow run ID: {mlflow_run_id}")
+
+        # -------------------------
+        # Download model artifact
+        # -------------------------
+        client = MlflowClient(tracking_uri="http://mlflow:5000")
+        artifact_path = client.download_artifacts(
+            run_id=mlflow_run_id,
+            path="catboost_artifacts/catboost_model.cbm"
+        )
+        log.info(f"Artifact downloaded to: {artifact_path}")
+
+        # -------------------------
+        # Load CatBoost model
+        # -------------------------
+        model = CatBoostClassifier()
+        model.load_model(artifact_path)
+        log.info("CatBoost model loaded successfully.")
+
+        # -------------------------
         # Reconstruct train/test data
+        # -------------------------
+        def reconstruct_df(obj):
+            if isinstance(obj, pd.DataFrame):
+                return obj
+            elif isinstance(obj, dict):
+                return pd.DataFrame(**obj)
+            else:
+                return pd.DataFrame(obj)
+
+        def reconstruct_series(obj):
+            if isinstance(obj, pd.Series):
+                return obj
+            elif isinstance(obj, dict) and 'data' in obj and 'index' in obj:
+                return pd.Series(obj['data'], index=obj['index'])
+            elif isinstance(obj, list):
+                return pd.Series(obj)
+            else:
+                return pd.Series(obj)
+
         X_train = reconstruct_df(ti.xcom_pull(key='X_train', task_ids='prepare_data_task'))
         y_train = reconstruct_series(ti.xcom_pull(key='y_train', task_ids='prepare_data_task'))
         X_test = reconstruct_df(ti.xcom_pull(key='X_test', task_ids='prepare_data_task'))
         y_test = reconstruct_series(ti.xcom_pull(key='y_test', task_ids='prepare_data_task'))
 
-        # Predict on test set
-        y_pred = trained_model.predict(X_test)
+        # -------------------------
+        # Check valid rows
+        # -------------------------
+        valid_train_rows = y_train.dropna().shape[0]
+        valid_test_rows = y_test.dropna().shape[0]
+        log.info(f"Valid target rows - train: {valid_train_rows}, test: {valid_test_rows}")
 
-        # Make sure `target` exists in current_df for Evidently
-        current_df_with_target = X_test.copy()
-        current_df_with_target['target'] = y_test
+        if valid_train_rows == 0 or valid_test_rows == 0:
+            log.warning("No valid target rows found. Skipping performance report.")
+            y_pred = None
+        else:
+            # Add target column for Evidently
+            X_train[target_col] = y_train
+            X_test[target_col] = y_test
 
-        # Generate reports (use the updated generate_evidently_report)
+            # Predict
+            y_pred = model.predict(X_test.drop(columns=[target_col], errors='ignore'))
+
+        # -------------------------
+        # Generate reports
+        # -------------------------
+        report_dir = "/opt/airflow/reports"
+        os.makedirs(report_dir, exist_ok=True)
+
         report_paths = generate_evidently_report(
-            reference_df=X_train.assign(target=y_train),  # train set with target
-            current_df=current_df_with_target,            # test set with target
-            y_pred=y_pred,                                # predictions
-            target_col='target'                           # explicitly pass target column
+            reference_df=X_train,
+            current_df=X_test,
+            target_col=target_col,
+            y_pred=y_pred,
+            task_type="classification",
+            report_dir=report_dir
         )
 
         ti.xcom_push(key='evidently_reports', value=report_paths)
-        return "Monitoring done"
+        log.info("Evidently reports generated and pushed to XCom.")
 
+        return "Monitoring done"
 
 
     evidently_monitoring_task = PythonOperator(

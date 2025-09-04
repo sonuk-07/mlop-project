@@ -10,15 +10,13 @@ services:
       - "3306:3306"
     volumes:
       - mariadb_data:/var/lib/mysql
-      - ./mariadb-init:/docker-entrypoint-initdb.d 
+      - ./mariadb-init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpassword"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
-
-
 
   mysql-airflow:
     image: mysql:8.0
@@ -49,14 +47,13 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: mysql+pymysql://airflow:airflowpass@mysql-airflow:3306/airflow
       AIRFLOW_CONN_MARIADB_CONN: mysql://sonu:Yunachan10@mariadb-columnstore:3306/shoppers_db
       AIRFLOW_UID: 50000
-
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
-      - ./data:/opt/airflow/data 
-      - ./mlruns:/mlflow  
-
-      
+      - ./data:/opt/airflow/data
+      - ./mlruns:/mlflow              # shared MLflow runs with MLflow server
+      - ./artifacts:/opt/airflow/artifacts
+      - ./reports:/opt/airflow/reports
     ports:
       - "8080:8080"
     depends_on:
@@ -69,7 +66,6 @@ services:
       airflow webserver"
     restart: unless-stopped
 
-
   airflow-scheduler:
     build:
       context: .
@@ -80,18 +76,18 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: mysql+pymysql://airflow:airflowpass@mysql-airflow:3306/airflow
       AIRFLOW_UID: 50000
       AIRFLOW_CONN_MARIADB_CONN: mysql://sonu:Yunachan10@mariadb-columnstore:3306/shoppers_db
-
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data
-      - ./mlruns:/mlflow 
+      - ./mlruns:/mlflow              # shared MLflow runs with MLflow server
+      - ./artifacts:/opt/airflow/artifacts
+      - ./reports:/opt/airflow/reports
     depends_on:
       airflow-webserver:
         condition: service_started
     command: airflow scheduler
     restart: unless-stopped
-
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.9.0
@@ -99,7 +95,7 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./models:/mlflow
+      - ./mlruns:/mlflow             # shared MLflow runs
     command: >
       mlflow server --backend-store-uri sqlite:////mlflow/mlflow.db --default-artifact-root /mlflow --host 0.0.0.0
     restart: unless-stopped
@@ -162,3 +158,4 @@ volumes:
   redis_data:
   prometheus_data:
   grafana_data:
+  airflow_artifacts:

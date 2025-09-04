@@ -22,10 +22,8 @@ def train_catboost_model(
     os.makedirs(artifact_dir, exist_ok=True)
     log.info("Starting CatBoost model training.")
 
+    # Set MLflow tracking URI
     mlflow.set_tracking_uri("http://mlflow:5000")
-
-
-
 
     # Start MLflow run
     with mlflow.start_run(run_name="CatBoost_Run") as run:
@@ -75,7 +73,14 @@ def train_catboost_model(
             pickle.dump(model, f)
 
         # -----------------------
-        # Log model to MLflow
+        # Log artifacts to MLflow
+        # -----------------------
+        mlflow.log_artifact(model_cbm_path, artifact_path="catboost_artifacts")
+        mlflow.log_artifact(model_pkl_path, artifact_path="catboost_artifacts")
+
+
+        # -----------------------
+        # Log CatBoost model to MLflow Model Registry
         # -----------------------
         mlflow.catboost.log_model(
             cb_model=model,
@@ -83,18 +88,24 @@ def train_catboost_model(
             registered_model_name="CatBoostClassifierModel"
         )
 
+        # -----------------------
         # Log evaluation metrics to MLflow
+        # -----------------------
         mlflow.log_metrics({
             "train_accuracy": metrics.get("train_accuracy"),
             "test_accuracy": metrics.get("test_accuracy"),
             "roc_auc": metrics.get("roc_auc")
         })
 
-        log.info(f"Model saved locally at {model_cbm_path} and {model_pkl_path}. MLflow run ID: {run_id}")
+        log.info(f"Model saved locally and logged to MLflow. Run ID: {run_id}")
 
+    # -----------------------
     # Return XCom-friendly info
+    # -----------------------
     return {
-        "model_path": model_pkl_path,   # path to pickle model for deployment
+        "model_cbm_path": model_cbm_path,  # local .cbm path
+        "model_pkl_path": model_pkl_path,  # local .pkl path
         "mlflow_run_id": run_id,
+        "mlflow_artifact_path": f"mlflow:catboost_artifacts",  # logical MLflow path
         "metrics": metrics
     }
