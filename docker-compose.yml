@@ -135,6 +135,9 @@ services:
     container_name: fastapi
     ports:
       - "8000:8000"
+    volumes:
+      - ./artifacts:/opt/airflow/artifacts
+      - ./mlruns:/mlflow
     depends_on:
       - mariadb-columnstore
       - redis
